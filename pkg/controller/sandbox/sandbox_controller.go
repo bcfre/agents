@@ -120,7 +120,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Info("Sandbox is shutdown time reached, will be deleted")
 			return ctrl.Result{}, r.Delete(ctx, box)
 		} else {
-			requeueAfter = box.Spec.ShutdownTime.Time.Sub(now.Time)
+			requeueAfter = max(box.Spec.ShutdownTime.Time.Sub(now.Time), time.Second)
 		}
 	}
 
