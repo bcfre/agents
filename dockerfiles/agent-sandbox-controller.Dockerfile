@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.24 AS builder
+FROM kube-ai-registry.cn-shanghai.cr.aliyuncs.com/kube-ai/golang:1.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -25,7 +25,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM alpine:3.20
+FROM kube-ai-registry.cn-shanghai.cr.aliyuncs.com/kube-ai/alpine:3.22
+
 WORKDIR /
 RUN mkdir -p /home/nonroot/sandbox-controller-webhook-certs && \
     chmod 777 /home/nonroot/sandbox-controller-webhook-certs && \

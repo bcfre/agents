@@ -8,13 +8,13 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/google/uuid"
 	"github.com/spf13/pflag"
 	"k8s.io/klog/v2"
 
 	"github.com/openkruise/agents/pkg/sandbox-manager/clients"
 	"github.com/openkruise/agents/pkg/servers/e2b"
 	"github.com/openkruise/agents/pkg/servers/e2b/models"
+	"github.com/openkruise/agents/pkg/servers/mcp"
 	utilfeature "github.com/openkruise/agents/pkg/utils/feature"
 )
 
@@ -52,9 +52,10 @@ func main() {
 
 	e2bAdminKey := os.Getenv("E2B_ADMIN_KEY")
 	if e2bAdminKey == "" {
-		e2bAdminKey = uuid.NewString()
+		// e2bAdminKey = uuid.NewString()
+		e2bAdminKey = "E2B_ADMIN_KEY"
 	}
-	e2bEnableAuth := os.Getenv("E2B_ENABLE_AUTH") == "true"
+	e2bEnableAuth := os.Getenv("E2B_ENABLE_AUTH") != "false"
 
 	// Get domain from environment variable or use empty string
 	domain := "localhost"
@@ -70,14 +71,28 @@ func main() {
 		e2bMaxTimeout = value
 	}
 
-	sysNs := os.Getenv("SYSTEM_NAMESPACE")
+	// sysNs := os.Getenv("SYSTEM_NAMESPACE")
+	sysNs := "default"
 	if sysNs == "" {
 		klog.Fatalf("env var SYSTEM_NAMESPACE is required")
 	}
 
-	peerSelector := os.Getenv("PEER_SELECTOR")
+	// peerSelector := os.Getenv("PEER_SELECTOR")
+	peerSelector := "agents.kruise.io/sandbox-manager-peer-finder=release-name-1"
 	if peerSelector == "" {
 		klog.Fatalf("env var PEER_SELECTOR is required")
+	}
+
+	// MCP Server configuration
+	mcpEnabled := os.Getenv("MCP_ENABLED") != "false"
+	// mcpEnabled := "true"
+	mcpPort := 18082
+	if mcpPortEnv, err := strconv.Atoi(os.Getenv("MCP_PORT")); err == nil {
+		mcpPort = mcpPortEnv
+	}
+	mcpTransport := os.Getenv("MCP_TRANSPORT")
+	if mcpTransport == "" {
+		mcpTransport = "http"
 	}
 	// =========== End Env =============
 
@@ -97,6 +112,41 @@ func main() {
 	if err != nil {
 		klog.Fatalf("Failed to start sandbox controller: %v", err)
 	}
+
+	// Start MCP Server if enabled
+	var mcpServer *mcp.MCPServer
+	if mcpEnabled {
+		klog.Info("MCP Server enabled, starting...")
+		mcpConfig := mcp.DefaultServerConfig()
+		mcpConfig.Enabled = true
+		mcpConfig.Port = mcpPort
+		mcpConfig.Transport = mcpTransport
+
+		mcpServer, err = mcp.NewMCPServer(
+			mcpConfig,
+			sandboxController.GetManager(),
+			sandboxController.GetKeys(),
+			3600,
+		)
+		if err != nil {
+			klog.Fatalf("Failed to create MCP server: %v", err)
+		}
+
+		if err := mcpServer.Start(sandboxCtx); err != nil {
+			klog.Fatalf("Failed to start MCP server: %v", err)
+		}
+		klog.InfoS("MCP server started successfully", "port", mcpPort, "transport", mcpTransport)
+	}
+
 	<-sandboxCtx.Done()
+
+	// Stop MCP Server if running
+	if mcpServer != nil {
+		klog.Info("Stopping MCP server...")
+		if err := mcpServer.Stop(sandboxCtx); err != nil {
+			klog.ErrorS(err, "Failed to stop MCP server gracefully")
+		}
+	}
+
 	klog.Info("Sandbox controller stopped")
 }

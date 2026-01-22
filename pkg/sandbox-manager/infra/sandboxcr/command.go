@@ -93,3 +93,8 @@ func (s *Sandbox) runCommandWithEnvd(ctx context.Context, processConfig *process
 	log.Info("all messages are received", "cost", time.Since(start), "result", result)
 	return result, errors.Join(result.Error, stream.Err())
 }
+
+// RunCommandWithEnvd is exported for external use
+func (s *Sandbox) RunCommandWithEnvd(ctx context.Context, processConfig *process.ProcessConfig, timeout time.Duration) (RunCommandResult, error) {
+	return s.runCommandWithEnvd(ctx, processConfig, timeout)
+}

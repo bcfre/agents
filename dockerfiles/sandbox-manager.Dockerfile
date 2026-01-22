@@ -1,5 +1,7 @@
 # Build stage
-FROM golang:1.24 AS builder
+FROM kube-ai-registry.cn-shanghai.cr.aliyuncs.com/kube-ai/golang:1.24 AS builder
+
+ENV GOPROXY=https://goproxy.cn
 
 WORKDIR /app
 
@@ -16,7 +18,8 @@ COPY ../proto ./proto
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sandbox-manager ./cmd/sandbox-manager
 
 # Final stage
-FROM alpine:3.20 as runtime
+FROM kube-ai-registry.cn-shanghai.cr.aliyuncs.com/kube-ai/alpine:3.22 as runtime
+
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
     apk --no-cache add ca-certificates && \
