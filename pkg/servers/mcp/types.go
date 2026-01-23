@@ -111,15 +111,44 @@ func (s *UserSession) Refresh() {
 
 // RunCodeRequest represents a request to execute code
 type RunCodeRequest struct {
-	Code string `json:"code" jsonschema:"required" jsonschema_description:"The Python code to execute"`
+	Code string `json:"code" jsonschema:"required" jsonschema_description:"The Python code to execute in Jupyter Notebook cell format"`
+}
+
+// ExecutionLogs represents the logs from code execution
+type ExecutionLogs struct {
+	Stdout []string `json:"stdout" jsonschema_description:"Standard output lines from code execution"`
+	Stderr []string `json:"stderr" jsonschema_description:"Standard error lines from code execution"`
+}
+
+// ExecutionError represents an error during code execution
+type ExecutionError struct {
+	Name      string `json:"name" jsonschema_description:"Error name/type"`
+	Value     string `json:"value" jsonschema_description:"Error message"`
+	Traceback string `json:"traceback" jsonschema_description:"Error traceback"`
+}
+
+// ExecutionResult represents a result from code execution
+// Supports multiple MIME types aligned with E2B Code Interpreter Execution model
+type ExecutionResult struct {
+	Text         string                 `json:"text,omitempty" jsonschema_description:"Text representation of the result"`
+	HTML         string                 `json:"html,omitempty" jsonschema_description:"HTML representation of the result"`
+	Markdown     string                 `json:"markdown,omitempty" jsonschema_description:"Markdown representation of the result"`
+	JSON         map[string]interface{} `json:"json,omitempty" jsonschema_description:"JSON representation of the result"`
+	PNG          string                 `json:"png,omitempty" jsonschema_description:"PNG image (base64 encoded)"`
+	SVG          string                 `json:"svg,omitempty" jsonschema_description:"SVG image representation"`
+	LaTeX        string                 `json:"latex,omitempty" jsonschema_description:"LaTeX representation of the result"`
+	IsMainResult bool                   `json:"is_main_result,omitempty" jsonschema_description:"Whether this is the main result of the cell"`
+	Extra        map[string]interface{} `json:"extra,omitempty" jsonschema_description:"Additional result metadata"`
 }
 
 // RunCodeResponse represents the response from code execution
+// This structure conforms to E2B Code Interpreter Server response format
 type RunCodeResponse struct {
-	Stdout          string                 `json:"stdout" jsonschema_description:"Standard output from code execution"`
-	Stderr          string                 `json:"stderr" jsonschema_description:"Standard error from code execution"`
-	ExecutionResult map[string]interface{} `json:"execution_result,omitempty" jsonschema_description:"Execution result data"`
-	SandboxID       string                 `json:"sandbox_id" jsonschema_description:"ID of the sandbox where code was executed"`
+	Error          *ExecutionError   `json:"error,omitempty" jsonschema_description:"Error information if execution failed"`
+	Logs           ExecutionLogs     `json:"logs" jsonschema_description:"Execution logs containing stdout and stderr"`
+	Results        []ExecutionResult `json:"results" jsonschema_description:"Execution results (rich output display)"`
+	SandboxID      string            `json:"sandbox_id" jsonschema_description:"ID of the sandbox where code was executed"`
+	ExecutionCount *int              `json:"execution_count,omitempty" jsonschema_description:"Execution count of the cell"`
 }
 
 // UploadFileRequest represents a request to upload a file

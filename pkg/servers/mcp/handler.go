@@ -17,6 +17,7 @@ limitations under the License.
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -109,33 +110,117 @@ func (h *Handler) HandleRunCode(ctx context.Context, req mcpgo.CallToolRequest, 
 // Helper functions
 
 func (h *Handler) executeCodeInSandbox(ctx context.Context, session *UserSession, code string) (*RunCodeResponse, error) {
-	// Prepare request body
+	log := klog.FromContext(ctx)
+	
+	// Prepare E2B compliant request body with all required fields
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"code":     code,
-		"language": "python",
+		"code":       code,
+		"context_id": nil,      // Reserved for future multi-context support
+		"language":   "python", // Currently only Python is supported
+		"env_vars":   nil,      // Reserved for future environment variable support
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Send request to sandbox
+	// Send request to sandbox /execute endpoint
+	// Note: X-Access-Token should be added by sandbox implementation based on session.AccessToken
 	resp, err := h.adapter.RequestToSandbox(ctx, session.UserID, session.SandboxID, http.MethodPost, "/execute", 49999, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request to sandbox: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Check HTTP status code
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("sandbox returned error: %d - %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("sandbox returned error: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
-	var result RunCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Initialize execution result structure
+	execution := &RunCodeResponse{
+		Logs: ExecutionLogs{
+			Stdout: []string{},
+			Stderr: []string{},
+		},
+		Results:   []ExecutionResult{},
+		SandboxID: session.SandboxID,
 	}
 
-	result.SandboxID = session.SandboxID
-	return &result, nil
+	// Parse streaming SSE response line by line
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue // Skip empty lines
+		}
+
+		// Parse each line as JSON
+		var data map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &data); err != nil {
+			log.V(1).Info("failed to parse JSON line, skipping", "line", line, "error", err)
+			continue
+		}
+
+		// Extract type field to determine message type
+		msgType, ok := data["type"].(string)
+		if !ok {
+			log.V(1).Info("missing or invalid type field, skipping", "data", data)
+			continue
+		}
+
+		// Process different message types according to E2B specification
+		switch msgType {
+		case "stdout":
+			if text, ok := data["text"].(string); ok {
+				execution.Logs.Stdout = append(execution.Logs.Stdout, text)
+			}
+		case "stderr":
+			if text, ok := data["text"].(string); ok {
+				execution.Logs.Stderr = append(execution.Logs.Stderr, text)
+			}
+		case "result":
+			// Parse complete result object with all MIME types
+			var result ExecutionResult
+			if resultBytes, err := json.Marshal(data); err == nil {
+				if err := json.Unmarshal(resultBytes, &result); err == nil {
+					execution.Results = append(execution.Results, result)
+				} else {
+					log.V(1).Info("failed to parse result object", "error", err)
+				}
+			}
+		case "error":
+			// Parse execution error with name, value, and traceback
+			execution.Error = &ExecutionError{
+				Name:      getStringField(data, "name"),
+				Value:     getStringField(data, "value"),
+				Traceback: getStringField(data, "traceback"),
+			}
+		case "number_of_executions":
+			// Extract execution count
+			if count, ok := data["execution_count"].(float64); ok {
+				intCount := int(count)
+				execution.ExecutionCount = &intCount
+			}
+		default:
+			log.V(2).Info("unknown message type, ignoring", "type", msgType, "data", data)
+		}
+	}
+
+	// Check for scanner errors (I/O issues during streaming)
+	if err := scanner.Err(); err != nil {
+		log.Error(err, "error reading streaming response", "sandboxID", session.SandboxID)
+		// Return partial results even if streaming was interrupted
+		return execution, fmt.Errorf("streaming interrupted: %w", err)
+	}
+
+	return execution, nil
+}
+
+// getStringField safely extracts a string field from a map
+func getStringField(data map[string]interface{}, key string) string {
+	if val, ok := data[key].(string); ok {
+		return val
+	}
+	return ""
 }
